@@ -1,0 +1,6 @@
+{
+  "name": "factorial-io/patternlab_picture",
+  "description": "Helper module to integrate picture better with patterlab",
+  "type": "drupal-module",
+  "license": "MIT"
+}
