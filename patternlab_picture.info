@@ -1,0 +1,7 @@
+name = Patternlab picture
+description = Patternlab integration for pictures.
+core = 7.x
+package = Theming
+
+dependencies[] = picture
+dependencies[] = field_formatter_settings

@@ -1,0 +1,272 @@
+<?php
+
+/**
+ * @file
+ * Integrates patternlab with picture-module.
+ */
+
+define('PATTERNLAB_PICTURE_INSTANCE_SETTING_TEMPLATE_KEY', 'pattern_picture_template');
+define('PATTERNLAB_PICTURE_INSTANCE_SETTING_MOBILE_FIELD_KEY', 'pattern_picture_override_with_field');
+define('PATTERNLAB_PICTURE_INSTANCE_SETTING_BREAKPOINT_KEY', 'pattern_picture_override_breakpoint');
+
+/**
+ * Implements hook_theme_registry_alter().
+ */
+function patternlab_picture_theme_registry_alter(&$theme_registry) {
+  unset($theme_registry['picture']['function']);
+
+  // Use a fallback template when template is not in theme.
+  if ($theme_registry['picture']['type'] == 'module') {
+    $path = drupal_get_path('module', 'patternlab_picture');
+    $theme_registry['picture']['template'] = $path . '/picture';
+    unset($theme_registry['picture']['theme path']);
+  }
+}
+
+/**
+ * Implements hook_field_formatter_info_alter().
+ */
+function patternlab_picture_field_formatter_info_alter(&$info) {
+  $info['picture']['settings'][PATTERNLAB_PICTURE_INSTANCE_SETTING_TEMPLATE_KEY] = '';
+  $info['picture']['settings'][PATTERNLAB_PICTURE_INSTANCE_SETTING_MOBILE_FIELD_KEY] = '';
+  $info['picture']['settings'][PATTERNLAB_PICTURE_INSTANCE_SETTING_BREAKPOINT_KEY] = '';
+}
+
+/**
+ * Implements hook_field_formatter_settings_form_alter().
+ */
+function patternlab_picture_field_formatter_settings_form_alter(array &$settings_form, array $context) {
+  $field = $context['field'];
+  $instance = $context['instance'];
+  $display = $context['instance']['display'][$context['view_mode']];
+  $settings = $display['settings'];
+  $settings_form[PATTERNLAB_PICTURE_INSTANCE_SETTING_TEMPLATE_KEY] = [
+    '#title' => t('Pattern Lab Template'),
+    '#type' => 'textfield',
+    '#default_value' => $settings[PATTERNLAB_PICTURE_INSTANCE_SETTING_TEMPLATE_KEY],
+  ];
+
+  $fields = field_info_instances($instance['entity_type'], $instance['bundle']);
+  $options = [];
+  foreach ($fields as $field_name => $field) {
+    $field_info = field_info_field($field_name);
+    if ($field_info['type'] == 'image' && $field_name != $instance['field_name']) {
+      $options[$field_name] = $field['label'];
+    }
+  }
+
+  if (count($options) > 0) {
+
+
+    $breakpoints = [];
+    if ($picture_mapping = picture_mapping_load($settings['picture_mapping'])) {
+      $breakpoints = $picture_mapping->getBreakpointGroup()->breakpoints;
+      $breakpoints = array_combine($breakpoints, $breakpoints);
+    }
+
+    $settings_form[PATTERNLAB_PICTURE_INSTANCE_SETTING_BREAKPOINT_KEY] = [
+      '#title' => t('Breakpoint to override'),
+      '#type' => 'select',
+      '#options' => [t('-- Select breakpoint to override --')] + $breakpoints,
+      '#default_value' => $settings[PATTERNLAB_PICTURE_INSTANCE_SETTING_BREAKPOINT_KEY],
+      '#description' => t('Select a breakpoint you want to override.'),
+    ];
+
+    $settings_form[PATTERNLAB_PICTURE_INSTANCE_SETTING_MOBILE_FIELD_KEY] = [
+      '#title' => t('Image-field to use as override'),
+      '#type' => 'select',
+      '#options' => [t('-- Select an image field --')] + $options,
+      '#default_value' => $settings[PATTERNLAB_PICTURE_INSTANCE_SETTING_MOBILE_FIELD_KEY],
+      '#description' => t('Select the image field which should be used to override a specific breakpoint.'),
+    ];
+  }
+}
+
+
+/**
+ * Implements hook_field_attach_view_alter().
+ *
+ * Overwrites the output of field.
+ */
+function patternlab_picture_field_attach_view_alter(&$output, $context) {
+  if (empty($context['view_mode']) || empty($context['display']) || $context['view_mode'] != $context['display']) {
+    return;
+  }
+  foreach ($output as $key => &$field) {
+    if (is_array($field) && !empty($field['#formatter']) && ($field['#formatter'] == 'picture')) {
+      $entity_type = $field['#entity_type'];
+      $bundle_name = $field['#bundle'];
+      $field_name = $field['#field_name'];
+      $instance_info = field_info_instance($entity_type, $field_name, $bundle_name);
+      $settings = $instance_info['display']['default']['settings'];
+
+      $template = $settings[PATTERNLAB_PICTURE_INSTANCE_SETTING_TEMPLATE_KEY];
+      $image_field_name = $settings[PATTERNLAB_PICTURE_INSTANCE_SETTING_MOBILE_FIELD_KEY];
+      $breakpoint = $settings[PATTERNLAB_PICTURE_INSTANCE_SETTING_BREAKPOINT_KEY];
+
+      foreach (element_children($field) as $ndx => $k) {
+        $field[$k]['#item']['attributes']['data-theme-suggestion'] = $template;
+        if (!empty($image_field_name)) {
+          $entity = $field['#object'];
+          $mobile_image = isset($entity->{$image_field_name}[LANGUAGE_NONE][$ndx]) ? $entity->{$image_field_name}[LANGUAGE_NONE][$ndx] : NULL;
+          if ($mobile_image) {
+            $field[$k]['#item']['attributes']['data-override-breakpoint'] = $breakpoint;
+            $field[$k]['#item']['attributes']['data-override-with-image'] = $mobile_image['uri'];
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Preprocess picture. Basically a rip-pff of theme_picture().
+ */
+function patternlab_picture_process_picture(array &$variables) {
+  if (!empty($variables['attributes']['data-theme-suggestion'])) {
+    $variables['theme_hook_suggestions'][] = 'picture__' . $variables['attributes']['data-theme-suggestion'];
+    unset($variables['attributes']['data-theme-suggestion']);
+  }
+  $override_breakpoint = !empty($variables['attributes']['data-override-breakpoint']) ? $variables['attributes']['data-override-breakpoint'] : NULL;
+  $override_image = !empty($variables['attributes']['data-override-with-image']) ? $variables['attributes']['data-override-with-image'] : NULL;
+
+  unset($variables['attributes']['data-override-breakpoint']);
+  unset($variables['attributes']['data-override-with-image']);
+
+
+  $image_styles = image_styles();
+  // Make sure that width and height are proper values.
+  // If they exists we'll output them.
+  // @see http://www.w3.org/community/respimg/2012/06/18/florians-compromise/
+  if (isset($variables['width']) && empty($variables['width'])) {
+    unset($variables['width']);
+    unset($variables['height']);
+  }
+  elseif (isset($variables['height']) && empty($variables['height'])) {
+    unset($variables['width']);
+    unset($variables['height']);
+  }
+  if (isset($variables['metadata']['width']) && isset($variables['metadata']['height'])) {
+    $variables['width'] = $variables['metadata']['width'];
+    $variables['height'] = $variables['metadata']['height'];
+  }
+
+  $sources = array();
+
+  // If we know width and height we use them, if not we should get image info.
+  if (!empty($variables['width']) && !empty($variables['height'])) {
+    $dimensions = array(
+      'width' => $variables['width'],
+      'height' => $variables['height'],
+    );
+  }
+  else {
+    if (($image_info = image_get_info($variables['uri'])) === FALSE) {
+      watchdog('Picture', 'Unable to load image: %image', array('%image' => $variables['uri']));
+      // If the image couldn't be loaded return nothing.
+      return NULL;
+    }
+    $dimensions = array(
+      'width' => $image_info['width'],
+      'height' => $image_info['height'],
+    );
+  }
+  if (module_exists('focal_point')) {
+    $files = file_load_multiple(array(), array('uri' => $variables['uri']));
+    $file = reset($files);
+    $variables['focal_point'] = explode(',', $file->focal_point);
+  }
+
+  $dimensions_base = array(
+    'width' => $variables['width'],
+    'height' => $variables['height'],
+  );
+
+  // All breakpoints and multipliers.
+  foreach ($variables['breakpoints'] as $breakpoint_name => $multipliers) {
+    $breakpoint = breakpoints_breakpoint_load_by_fullkey($breakpoint_name);
+    if ($breakpoint) {
+      $sizes = array();
+      $srcset = array();
+      $uri = $variables['uri'];
+
+      if ($breakpoint_name == $override_breakpoint) {
+        $uri = $override_image;
+        $image_info = image_get_info($uri);
+        $dimensions_override = array(
+          'width' => $image_info['width'],
+          'height' => $image_info['height'],
+        );
+      }
+
+      foreach ($multipliers as $multiplier => $mapping_definition) {
+
+        switch ($mapping_definition['mapping_type']) {
+          case 'sizes':
+            foreach (array_filter($mapping_definition['sizes_image_styles']) as $image_style_name) {
+              $dimensions_clone = $dimensions;
+              picture_get_image_dimensions($image_style_name, $dimensions_clone);
+              // Get mime type.
+              // $derivative_mime_type = $mime_type;
+              // $image_style->transformMimeType($derivative_mime_type);
+              // $derivative_mime_types[] = $derivative_mime_type;.
+              $srcset[$dimensions_clone['width']] = _picture_image_style_url($image_style_name, $uri, $variables['timestamp']) . ' ' . $dimensions_clone['width'] . 'w';
+              $sizes = array_merge(explode(',', $mapping_definition['sizes']), $sizes);
+            }
+            break;
+
+          case 'image_style':
+            // Get mime type (not implemented in Drupal 7.
+            // $derivative_mime_type = $mime_type;
+            // $image_style->transformMimeType($derivative_mime_type);
+            // $derivative_mime_types[] = $derivative_mime_type;.
+            $srcset[$multiplier] = _picture_image_style_url($mapping_definition['image_style'], $uri, $variables['timestamp']) . ' ' . $multiplier;
+            break;
+        }
+      }
+
+      // Sort srcset.
+      ksort($srcset);
+
+      if ($breakpoint_name == $override_breakpoint) {
+        $dimensions = $dimensions_override;
+      }
+      else {
+        $dimensions = $dimensions_base;
+      }
+      $dimensions = picture_get_image_dimensions($mapping_definition['image_style'], $dimensions);
+
+      $sources[] = array(
+        'srcset' => implode(', ', array_unique($srcset)),
+        'media' => $breakpoint->breakpoint,
+        'width' => $dimensions['width'],
+        'height' => $dimensions['height'],
+        'sizes' => implode(', ', array_unique($sizes)),
+        'lazyload' => !empty($variables['lazyload']),
+      );
+    }
+  }
+
+  if (!empty($sources)) {
+    $variables['sources'] = $sources;
+    $variables['src'] = _picture_image_style_url($variables['style_name'], $variables['uri'], $variables['timestamp']);
+  }
+}
+
+/**
+ * Implements hook_js_alter().
+ */
+function patternlab_picture_js_alter(&$javascript) {
+
+  // Polyfills etc are handled by the patternlab frontend.
+  $list = array(
+    'sites/all/modules/contrib/picture/picturefill2/picturefill.min.js',
+    'sites/all/modules/contrib/picture/picture.min.js',
+    'sites/all/modules/contrib/picture/lazysizes/lazysizes.min.js',
+    'sites/all/modules/contrib/picture/lazysizes/plugins/aspectratio/ls.aspectratio.min.js',
+  );
+  foreach ($list as $item) {
+    unset($javascript[$item]);
+  }
+}
+
