@@ -99,7 +99,14 @@ function patternlab_picture_field_attach_view_alter(&$output, $context) {
       $field_name = $field['#field_name'];
       $view_mode = $field['#view_mode'];
       $instance_info = field_info_instance($entity_type, $field_name, $bundle_name);
-      $settings = $instance_info['display'][$view_mode]['settings'];
+      // If there is no display settings defined for supplied view mode,
+      // fallback to settings from the 'default' view mode settings.
+      if (!empty($instance_info['display'][$view_mode]['settings'])) {
+        $settings = $instance_info['display'][$view_mode]['settings'];
+      }
+      else {
+        $settings = $instance_info['display']['default']['settings'];
+      }
       $template = $settings[PATTERNLAB_PICTURE_INSTANCE_SETTING_TEMPLATE_KEY];
       $image_field_name = $settings[PATTERNLAB_PICTURE_INSTANCE_SETTING_MOBILE_FIELD_KEY];
       $breakpoint = $settings[PATTERNLAB_PICTURE_INSTANCE_SETTING_BREAKPOINT_KEY];
