@@ -130,8 +130,10 @@ function patternlab_picture_field_attach_view_alter(&$output, $context) {
  * Preprocess picture. Basically a rip-pff of theme_picture().
  */
 function patternlab_picture_process_picture(array &$variables) {
+  $variables['theme_hook_suggestions'][] = 'picture__' . str_replace('-', '_', $variables['style_name']);
+
   if (!empty($variables['attributes']['data-theme-suggestion'])) {
-    $variables['theme_hook_suggestions'][] = 'picture__' . $variables['attributes']['data-theme-suggestion'];
+    $variables['theme_hook_suggestions'][] = 'picture__' . str_replace('-', '_', $variables['attributes']['data-theme-suggestion']);
     unset($variables['attributes']['data-theme-suggestion']);
   }
   $override_breakpoint = !empty($variables['attributes']['data-override-breakpoint']) ? $variables['attributes']['data-override-breakpoint'] : NULL;
